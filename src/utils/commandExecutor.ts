@@ -1,5 +1,64 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { Logger } from "./logger.js";
+
+export function pickWindowsCommandCandidate(command: string, whereOutput: string): string {
+  const lines = whereOutput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const escapedCommand = command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const commandWithExtPattern = new RegExp(`[\\\\/]${escapedCommand}\\.(cmd|bat|exe)$`, "i");
+  const commandWithoutExtPattern = new RegExp(`[\\\\/]${escapedCommand}$`, "i");
+
+  const preferred = lines.find((line) => commandWithExtPattern.test(line));
+  if (preferred) {
+    return preferred;
+  }
+
+  const anyExecutable = lines.find((line) => /\.(cmd|bat|exe)$/i.test(line));
+  if (anyExecutable) {
+    return anyExecutable;
+  }
+
+  const extensionless = lines.find((line) => commandWithoutExtPattern.test(line));
+  if (extensionless) {
+    return extensionless;
+  }
+
+  return `${command}.cmd`;
+}
+
+function shouldSkipWindowsResolution(command: string): boolean {
+  return (
+    process.platform !== "win32" ||
+    /\.[a-z0-9]+$/i.test(command) ||
+    command.includes("\\") ||
+    command.includes("/")
+  );
+}
+
+export function resolveCommandForExecution(command: string): string {
+  if (shouldSkipWindowsResolution(command)) {
+    return command;
+  }
+
+  try {
+    const whereResult = spawnSync("where", [command], {
+      env: process.env,
+      shell: false,
+      encoding: "utf8",
+    });
+    const whereOutput = (whereResult.stdout || "").toString();
+    if (whereResult.status === 0 && whereOutput.trim()) {
+      return pickWindowsCommandCandidate(command, whereOutput);
+    }
+  } catch {
+    // Fall through to conservative .cmd fallback.
+  }
+
+  return `${command}.cmd`;
+}
 
 export async function executeCommand(
   command: string,
@@ -8,9 +67,10 @@ export async function executeCommand(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
-    Logger.commandExecution(command, args, startTime);
+    const resolvedCommand = resolveCommandForExecution(command);
+    Logger.commandExecution(resolvedCommand, args, startTime);
 
-    const childProcess = spawn(command, args, {
+    const childProcess = spawn(resolvedCommand, args, {
       env: process.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],

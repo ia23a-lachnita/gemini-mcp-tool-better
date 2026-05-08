@@ -33,6 +33,8 @@ Before using this tool, ensure you have:
 1. **[Node.js](https://nodejs.org/)** (v16.0.0 or higher)
 2. **[Google Gemini CLI](https://github.com/google-gemini/gemini-cli)** installed and configured
 
+On Windows, the MCP now resolves `gemini` safely across common installs (`gemini`, `gemini.cmd`, `gemini.CMD`) such as nvm4w and pnpm shims.
+
 
 ### One-Line Setup
 
@@ -142,7 +144,7 @@ By default, this MCP preserves current Gemini CLI behavior and does **not** pass
 - Tool argument always overrides the environment variable
 - Supported values: `default | auto_edit | plan | yolo`
 
-⚠️ **Security note:** `yolo` auto-approves Gemini CLI tool actions.
+⚠️ **Security note:** `yolo` auto-approves Gemini CLI tool actions with no human review, including potentially destructive file edits, command execution, and external actions triggered by tools.
 
 ### MCP-Managed Named Conversations
 
