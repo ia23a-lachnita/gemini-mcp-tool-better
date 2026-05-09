@@ -1,5 +1,125 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { Logger } from "./logger.js";
+
+function normalizeExecutablePath(pathValue: string): string {
+  const trimmed = pathValue.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function getGeminiCliPathOverride(command: string): string | undefined {
+  const override = process.env.GEMINI_CLI_PATH;
+  if (command !== "gemini" || !override?.trim()) {
+    return undefined;
+  }
+  return normalizeExecutablePath(override);
+}
+
+export function pickWindowsCommandCandidate(command: string, whereOutput: string): string {
+  const lines = whereOutput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const escapedCommand = command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const commandWithExtPattern = new RegExp(`[\\\\/]${escapedCommand}\\.(cmd|bat|exe)$`, "i");
+  const commandWithoutExtPattern = new RegExp(`[\\\\/]${escapedCommand}$`, "i");
+
+  const preferred = lines.find((line) => commandWithExtPattern.test(line));
+  if (preferred) {
+    return preferred;
+  }
+
+  const anyExecutable = lines.find((line) => /\.(cmd|bat|exe)$/i.test(line));
+  if (anyExecutable) {
+    return anyExecutable;
+  }
+
+  const extensionless = lines.find((line) => commandWithoutExtPattern.test(line));
+  if (extensionless) {
+    return extensionless;
+  }
+
+  return `${command}.cmd`;
+}
+
+function shouldSkipWindowsResolution(command: string): boolean {
+  return (
+    process.platform !== "win32" ||
+    /\.[a-z0-9]+$/i.test(command) ||
+    command.includes("\\") ||
+    command.includes("/")
+  );
+}
+
+export function resolveCommandForExecution(command: string): string {
+  const overridePath = getGeminiCliPathOverride(command);
+  if (overridePath) {
+    return overridePath;
+  }
+
+  if (shouldSkipWindowsResolution(command)) {
+    return command;
+  }
+
+  try {
+    const whereResult = spawnSync("where", [command], {
+      env: process.env,
+      shell: false,
+      encoding: "utf8",
+    });
+    const whereOutput = (whereResult.stdout || "").toString();
+    if (whereResult.status === 0 && whereOutput.trim()) {
+      return pickWindowsCommandCandidate(command, whereOutput);
+    }
+  } catch {
+    // Fall through to conservative .cmd fallback.
+  }
+
+  return `${command}.cmd`;
+}
+
+function quoteForWindowsCmd(value: string): string {
+  const escapedPercent = value.replace(/%/g, "%%");
+  const escaped = escapedPercent.replace(/(["^&|<>])/g, "^$1");
+  return `"${escaped}"`;
+}
+
+export function buildCommandExecutionPlan(
+  resolvedCommand: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(resolvedCommand)) {
+    const commandString = [resolvedCommand, ...args].map(quoteForWindowsCmd).join(" ");
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", commandString],
+    };
+  }
+
+  return {
+    command: resolvedCommand,
+    args,
+  };
+}
+
+export function buildEnoentErrorMessage(command: string): string {
+  return (
+    `Gemini CLI not found: '${command}' could not be launched.\n` +
+    `The Gemini CLI may work in your terminal but not in the MCP server process PATH.\n` +
+    `To fix this:\n` +
+    `  1. Find the full executable path:\n` +
+    `       Windows: where gemini\n` +
+    `       macOS/Linux: which gemini\n` +
+    `  2. Add the Gemini CLI directory to your system PATH.\n` +
+    `  3. Or set the GEMINI_CLI_PATH environment variable to the full path, for example:\n` +
+    `       GEMINI_CLI_PATH=C:\\nvm4w\\nodejs\\gemini.cmd\n` +
+    `       GEMINI_CLI_PATH=C:\\Users\\<user>\\AppData\\Local\\pnpm\\gemini.CMD`
+  );
+}
 
 export async function executeCommand(
   command: string,
@@ -8,9 +128,11 @@ export async function executeCommand(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
-    Logger.commandExecution(command, args, startTime);
+    const resolvedCommand = resolveCommandForExecution(command);
+    const executionPlan = buildCommandExecutionPlan(resolvedCommand, args);
+    Logger.commandExecution(executionPlan.command, executionPlan.args, startTime);
 
-    const childProcess = spawn(command, args, {
+    const childProcess = spawn(executionPlan.command, executionPlan.args, {
       env: process.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -62,7 +184,11 @@ export async function executeCommand(
       if (!isResolved) {
         isResolved = true;
         Logger.error(`Process error:`, error);
-        reject(new Error(`Failed to spawn command: ${error.message}`));
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          reject(new Error(buildEnoentErrorMessage(executionPlan.command)));
+        } else {
+          reject(new Error(`Failed to spawn command: ${error.message}`));
+        }
       }
     });
     childProcess.on("close", (code) => {

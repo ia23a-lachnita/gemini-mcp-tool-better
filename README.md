@@ -33,6 +33,9 @@ Before using this tool, ensure you have:
 1. **[Node.js](https://nodejs.org/)** (v16.0.0 or higher)
 2. **[Google Gemini CLI](https://github.com/google-gemini/gemini-cli)** installed and configured
 
+On Windows, the MCP resolves `gemini` across common installs (`gemini`, `gemini.cmd`, `gemini.CMD`) such as nvm4w and pnpm shims, and executes `.cmd`/`.bat` via `cmd.exe`.
+If needed, you can force a specific Gemini executable path with `GEMINI_CLI_PATH` (for example: `C:\nvm4w\nodejs\gemini.cmd`).
+
 
 ### One-Line Setup
 
@@ -133,6 +136,40 @@ The sandbox mode allows you to safely test code changes, run scripts, or execute
 - `use gemini sandbox to install numpy and create a data visualization`
 - `test this code safely: Create a script that makes HTTP requests to an API`
 
+### Approval Mode (including YOLO)
+
+By default, this MCP preserves current Gemini CLI behavior and does **not** pass an approval flag.
+
+- Tool argument: set `approvalMode: "yolo"` to run with `--approval-mode=yolo`
+- Environment default: set `GEMINI_MCP_APPROVAL_MODE=yolo` to apply it by default
+- Tool argument always overrides the environment variable
+- Supported values: `default | auto_edit | plan | yolo`
+
+⚠️ **Security note:** `yolo` auto-approves Gemini CLI tool actions with no human review, including potentially destructive file edits, command execution, and external actions triggered by tools.
+
+### MCP-Managed Named Conversations
+
+This server can optionally replay prior context into later **one-shot** Gemini CLI calls.
+
+- Add `conversationId` to enable named history
+- If `conversationId` is set and `conversationMode` is omitted, mode defaults to `append`
+- Modes:
+  - `none`: do not load or save history
+  - `append`: load bounded history and save the new turn
+  - `readonly`: load bounded history but do not save the new turn
+  - `reset`: clear that conversation first, then process and save the new turn
+- Optional replay bounds:
+  - `maxConversationTurns`
+  - `maxConversationChars`
+  - If the latest saved turn alone exceeds `maxConversationChars`, the latest turn is still included
+- Storage location:
+  - Default: `~/.gemini-mcp-tool/conversations`
+  - Override: `GEMINI_MCP_CONVERSATION_DIR`
+
+This is **MCP-managed context replay**, not native Gemini CLI session persistence.
+
+🔐 **Privacy note:** persisted conversations may include code, file contents, plans, and potentially secrets from prompts/responses.
+
 ### Tools (for the AI)
 
 These tools are designed to be used by the AI assistant.
@@ -141,6 +178,11 @@ These tools are designed to be used by the AI assistant.
   - **`prompt`** (required): The analysis request. Use the `@` syntax to include file or directory references (e.g., `@src/main.js explain this code`) or ask general questions (e.g., `Please use a web search to find the latest news stories`).
   - **`model`** (optional): The Gemini model to use. Defaults to `gemini-2.5-pro`.
   - **`sandbox`** (optional): Set to `true` to run in sandbox mode for safe code execution.
+  - **`approvalMode`** (optional): `default | auto_edit | plan | yolo`.
+  - **`conversationId`** (optional): Enables MCP-managed named conversation replay.
+  - **`conversationMode`** (optional): `none | append | readonly | reset` (defaults to `append` when `conversationId` is set).
+  - **`maxConversationTurns`** (optional): Limit prior turns replayed into the one-shot prompt.
+  - **`maxConversationChars`** (optional): Limit replayed conversation text size.
 - **`sandbox-test`**: Safely executes code or commands in Gemini's sandbox environment. Always runs in sandbox mode.
   - **`prompt`** (required): Code testing request (e.g., `Create and run a Python script that...` or `@script.py Run this safely`).
   - **`model`** (optional): The Gemini model to use.

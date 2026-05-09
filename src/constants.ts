@@ -3,6 +3,9 @@
 // Logging
 export const LOG_PREFIX = "[GMCPT]";
 
+export type ApprovalMode = "default" | "auto_edit" | "plan" | "yolo";
+export type ConversationMode = "none" | "append" | "readonly" | "reset";
+
 // Error messages
 export const ERROR_MESSAGES = {
   QUOTA_EXCEEDED: "Quota exceeded for quota metric 'Gemini 2.5 Pro Requests'",
@@ -69,6 +72,7 @@ export const CLI = {
     MODEL: "-m",
     SANDBOX: "-s",
     PROMPT: "-p",
+    APPROVAL_MODE: "--approval-mode",
     HELP: "-help",
   },
   // Default values
@@ -86,6 +90,11 @@ export interface ToolArguments {
   model?: string;
   sandbox?: boolean | string;
   changeMode?: boolean | string;
+  approvalMode?: ApprovalMode;
+  conversationId?: string;
+  conversationMode?: ConversationMode;
+  maxConversationTurns?: number;
+  maxConversationChars?: number;
   chunkIndex?: number | string; // Which chunk to return (1-based)
   chunkCacheKey?: string; // Optional cache key for continuation
   message?: string; // For Ping tool -- Un-used.

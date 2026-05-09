@@ -4,7 +4,8 @@ import {
   ERROR_MESSAGES, 
   STATUS_MESSAGES, 
   MODELS, 
-  CLI
+  CLI,
+  ApprovalMode
 } from '../constants.js';
 
 import { parseChangeModeOutput, validateChangeModeEdits } from './changeModeParser.js';
@@ -12,13 +13,61 @@ import { formatChangeModeResponse, summarizeChangeModeEdits } from './changeMode
 import { chunkChangeModeEdits } from './changeModeChunker.js';
 import { cacheChunks, getChunks } from './chunkCache.js';
 
+export interface GeminiExecutionOptions {
+  model?: string;
+  sandbox?: boolean;
+  changeMode?: boolean;
+  approvalMode?: ApprovalMode;
+  onProgress?: (newOutput: string) => void;
+}
+
+const VALID_APPROVAL_MODES: ApprovalMode[] = ["default", "auto_edit", "plan", "yolo"];
+
+function isApprovalMode(value: string): value is ApprovalMode {
+  return VALID_APPROVAL_MODES.includes(value as ApprovalMode);
+}
+
+export function resolveApprovalMode(approvalMode?: ApprovalMode): ApprovalMode {
+  if (approvalMode) {
+    return approvalMode;
+  }
+
+  const envMode = process.env.GEMINI_MCP_APPROVAL_MODE?.trim();
+  if (!envMode) {
+    return "default";
+  }
+
+  if (!isApprovalMode(envMode)) {
+    Logger.warn(`Ignoring invalid GEMINI_MCP_APPROVAL_MODE: ${envMode}`);
+    return "default";
+  }
+
+  return envMode;
+}
+
+export function buildGeminiArgs(
+  prompt: string,
+  options: Pick<GeminiExecutionOptions, "model" | "sandbox" | "approvalMode">,
+): string[] {
+  const args: string[] = [];
+  if (options.model) { args.push(CLI.FLAGS.MODEL, options.model); }
+  if (options.sandbox) { args.push(CLI.FLAGS.SANDBOX); }
+
+  const resolvedApprovalMode = resolveApprovalMode(options.approvalMode);
+  if (resolvedApprovalMode !== "default") {
+    args.push(`${CLI.FLAGS.APPROVAL_MODE}=${resolvedApprovalMode}`);
+  }
+
+  // Pass prompt as a single argv element (no shell interpolation/wrapping).
+  args.push(CLI.FLAGS.PROMPT, prompt);
+  return args;
+}
+
 export async function executeGeminiCLI(
   prompt: string,
-  model?: string,
-  sandbox?: boolean,
-  changeMode?: boolean,
-  onProgress?: (newOutput: string) => void
+  options: GeminiExecutionOptions = {}
 ): Promise<string> {
+  const { model, sandbox, changeMode, onProgress, approvalMode } = options;
   let prompt_processed = prompt;
   
   if (changeMode) {
@@ -87,16 +136,7 @@ ${prompt_processed}
     prompt_processed = changeModeInstructions;
   }
   
-  const args = [];
-  if (model) { args.push(CLI.FLAGS.MODEL, model); }
-  if (sandbox) { args.push(CLI.FLAGS.SANDBOX); }
-  
-  // Ensure @ symbols work cross-platform by wrapping in quotes if needed
-  const finalPrompt = prompt_processed.includes('@') && !prompt_processed.startsWith('"') 
-    ? `"${prompt_processed}"` 
-    : prompt_processed;
-    
-  args.push(CLI.FLAGS.PROMPT, finalPrompt);
+  const args = buildGeminiArgs(prompt_processed, { model, sandbox, approvalMode });
   
   try {
     return await executeCommand(CLI.COMMANDS.GEMINI, args, onProgress);
@@ -105,18 +145,11 @@ ${prompt_processed}
     if (errorMessage.includes(ERROR_MESSAGES.QUOTA_EXCEEDED) && model !== MODELS.FLASH) {
       Logger.warn(`${ERROR_MESSAGES.QUOTA_EXCEEDED}. Falling back to ${MODELS.FLASH}.`);
       await sendStatusMessage(STATUS_MESSAGES.FLASH_RETRY);
-      const fallbackArgs = [];
-      fallbackArgs.push(CLI.FLAGS.MODEL, MODELS.FLASH);
-      if (sandbox) {
-        fallbackArgs.push(CLI.FLAGS.SANDBOX);
-      }
-      
-      // Same @ symbol handling for fallback
-      const fallbackPrompt = prompt_processed.includes('@') && !prompt_processed.startsWith('"') 
-        ? `"${prompt_processed}"` 
-        : prompt_processed;
-        
-      fallbackArgs.push(CLI.FLAGS.PROMPT, fallbackPrompt);
+      const fallbackArgs = buildGeminiArgs(prompt_processed, {
+        model: MODELS.FLASH,
+        sandbox,
+        approvalMode,
+      });
       try {
         const result = await executeCommand(CLI.COMMANDS.GEMINI, fallbackArgs, onProgress);
         Logger.warn(`Successfully executed with ${MODELS.FLASH} fallback.`);
