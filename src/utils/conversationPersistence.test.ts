@@ -4,6 +4,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  listGeminiConversations,
+  readGeminiConversation,
+  clearGeminiConversation,
+  deleteGeminiConversation,
   prepareConversationContext,
   persistConversationTurn,
   getConversationStoragePath,
@@ -128,4 +132,82 @@ test("unsafe conversation IDs cannot escape conversation directory", () => {
     assert.equal(resolvedFile.startsWith(`${resolvedDir}${path.sep}`), true);
     assert.equal(path.relative(resolvedDir, resolvedFile).includes(".."), false);
   }
+});
+
+test("listGeminiConversations returns summaries sorted by updated time", () => {
+  const dir = createTempConversationDir();
+  process.env.GEMINI_MCP_CONVERSATION_DIR = dir;
+
+  persistConversationTurn("list-a", "u1", "r1");
+  persistConversationTurn("list-b", "u2", "r2");
+  persistConversationTurn("list-b", "u3", "r3");
+
+  const summaries = listGeminiConversations();
+  assert.equal(summaries.length >= 2, true);
+  assert.equal(summaries[0].conversationId, "list-b");
+  assert.equal(summaries[0].turnCount >= 2, true);
+});
+
+test("listing recovers conversationId from file content", () => {
+  const dir = createTempConversationDir();
+  process.env.GEMINI_MCP_CONVERSATION_DIR = dir;
+
+  const manualFile = path.join(dir, "manual.json");
+  fs.writeFileSync(
+    manualFile,
+    JSON.stringify({ conversationId: "manual-id", turns: [] }, null, 2),
+    "utf8",
+  );
+
+  const summaries = listGeminiConversations();
+  assert.equal(summaries.some((summary) => summary.conversationId === "manual-id"), true);
+});
+
+test("readGeminiConversation returns recent turns", () => {
+  const dir = createTempConversationDir();
+  process.env.GEMINI_MCP_CONVERSATION_DIR = dir;
+
+  persistConversationTurn("read-1", "u1", "r1");
+  persistConversationTurn("read-1", "u2", "r2");
+  persistConversationTurn("read-1", "u3", "r3");
+
+  const details = readGeminiConversation("read-1", 2);
+  assert.equal(details.turnCount, 3);
+  assert.equal(details.returnedTurns, 2);
+  assert.equal(details.turns[0].userPrompt, "u2");
+});
+
+test("clearGeminiConversation removes turns but keeps file", () => {
+  const dir = createTempConversationDir();
+  process.env.GEMINI_MCP_CONVERSATION_DIR = dir;
+
+  persistConversationTurn("clear-1", "u1", "r1");
+  const filePath = getConversationStoragePath("clear-1");
+  assert.equal(fs.existsSync(filePath), true);
+
+  clearGeminiConversation("clear-1");
+  const data = JSON.parse(fs.readFileSync(filePath, "utf8")) as { turns: unknown[] };
+  assert.equal(Array.isArray(data.turns), true);
+  assert.equal(data.turns.length, 0);
+});
+
+test("deleteGeminiConversation removes the file", () => {
+  const dir = createTempConversationDir();
+  process.env.GEMINI_MCP_CONVERSATION_DIR = dir;
+
+  persistConversationTurn("delete-1", "u1", "r1");
+  const filePath = getConversationStoragePath("delete-1");
+  assert.equal(fs.existsSync(filePath), true);
+
+  deleteGeminiConversation("delete-1");
+  assert.equal(fs.existsSync(filePath), false);
+});
+
+test("read/clear/delete error on missing conversation", () => {
+  const dir = createTempConversationDir();
+  process.env.GEMINI_MCP_CONVERSATION_DIR = dir;
+
+  assert.throws(() => readGeminiConversation("missing"));
+  assert.throws(() => clearGeminiConversation("missing"));
+  assert.throws(() => deleteGeminiConversation("missing"));
 });

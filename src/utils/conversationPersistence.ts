@@ -15,6 +15,25 @@ interface ConversationFile {
   turns: ConversationTurn[];
 }
 
+export interface ConversationSummary {
+  conversationId: string;
+  fileName: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  turnCount: number;
+  sizeBytes: number;
+}
+
+export interface ConversationDetails {
+  conversationId: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  turnCount: number;
+  returnedTurns: number;
+  sizeBytes: number;
+  turns: ConversationTurn[];
+}
+
 const DEFAULT_CONVERSATION_DIR = path.join(os.homedir(), ".gemini-mcp-tool", "conversations");
 const DEFAULT_MAX_CONVERSATION_TURNS = 10;
 const DEFAULT_MAX_CONVERSATION_CHARS = 12000;
@@ -38,6 +57,11 @@ function ensureConversationDir(): string {
   const dir = process.env.GEMINI_MCP_CONVERSATION_DIR?.trim() || DEFAULT_CONVERSATION_DIR;
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function getConversationDirIfExists(): string | undefined {
+  const dir = process.env.GEMINI_MCP_CONVERSATION_DIR?.trim() || DEFAULT_CONVERSATION_DIR;
+  return fs.existsSync(dir) ? dir : undefined;
 }
 
 function getConversationFilePath(conversationId: string): string {
@@ -82,6 +106,38 @@ function clearConversation(conversationId: string): void {
   }
 }
 
+function readConversationFile(filePath: string): ConversationFile | undefined {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<ConversationFile>;
+    if (typeof parsed.conversationId !== "string" || !Array.isArray(parsed.turns)) {
+      return undefined;
+    }
+    const validTurns = parsed.turns.filter(
+      (turn) =>
+        typeof turn?.userPrompt === "string" &&
+        typeof turn?.geminiResponse === "string" &&
+        typeof turn?.timestamp === "string",
+    );
+    return { conversationId: parsed.conversationId, turns: validTurns };
+  } catch {
+    return undefined;
+  }
+}
+
+function requireConversationFile(conversationId: string): { filePath: string; data: ConversationFile; stat: fs.Stats } {
+  const filePath = getConversationFilePath(conversationId);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Conversation not found: ${conversationId}`);
+  }
+  const data = readConversationFile(filePath);
+  if (!data || data.conversationId !== conversationId) {
+    throw new Error(`Conversation not found: ${conversationId}`);
+  }
+  const stat = fs.statSync(filePath);
+  return { filePath, data, stat };
+}
+
 export function resolveConversationMode(
   conversationId?: string,
   conversationMode?: ConversationMode,
@@ -98,6 +154,72 @@ export function getConversationDirectory(): string {
 
 export function getConversationStoragePath(conversationId: string): string {
   return getConversationFilePath(conversationId);
+}
+
+export function listGeminiConversations(): ConversationSummary[] {
+  const dir = getConversationDirIfExists();
+  if (!dir) {
+    return [];
+  }
+
+  const entries = fs.readdirSync(dir).filter((entry) => entry.toLowerCase().endsWith(".json"));
+  const summaries: ConversationSummary[] = [];
+
+  for (const entry of entries) {
+    const filePath = path.join(dir, entry);
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) {
+      continue;
+    }
+    const data = readConversationFile(filePath);
+    if (!data) {
+      continue;
+    }
+    summaries.push({
+      conversationId: data.conversationId,
+      fileName: entry,
+      createdAt: stat.birthtime ? stat.birthtime.toISOString() : null,
+      updatedAt: stat.mtime ? stat.mtime.toISOString() : null,
+      turnCount: data.turns.length,
+      sizeBytes: stat.size,
+    });
+  }
+
+  summaries.sort((a, b) => {
+    const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    return bTime - aTime;
+  });
+
+  return summaries;
+}
+
+export function readGeminiConversation(
+  conversationId: string,
+  limitTurns = 5,
+): ConversationDetails {
+  const { data, stat } = requireConversationFile(conversationId);
+  const safeLimit = limitTurns <= 0 ? 0 : limitTurns;
+  const turns = safeLimit ? data.turns.slice(-safeLimit) : [];
+  return {
+    conversationId: data.conversationId,
+    createdAt: stat.birthtime ? stat.birthtime.toISOString() : null,
+    updatedAt: stat.mtime ? stat.mtime.toISOString() : null,
+    turnCount: data.turns.length,
+    returnedTurns: turns.length,
+    sizeBytes: stat.size,
+    turns,
+  };
+}
+
+export function clearGeminiConversation(conversationId: string): void {
+  const { data } = requireConversationFile(conversationId);
+  saveConversation(data.conversationId, []);
+}
+
+export function deleteGeminiConversation(conversationId: string): void {
+  const { filePath } = requireConversationFile(conversationId);
+  fs.unlinkSync(filePath);
 }
 
 function applyTurnLimit(turns: ConversationTurn[], maxConversationTurns: number): ConversationTurn[] {

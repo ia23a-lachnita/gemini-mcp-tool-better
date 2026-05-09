@@ -179,6 +179,34 @@ This is **MCP-managed context replay**, not native Gemini CLI session persistenc
 
 🔐 **Privacy note:** persisted conversations may include code, file contents, plans, and potentially secrets from prompts/responses.
 
+### Conversation Management Tools
+
+These tools help discover and maintain persisted conversations without dumping full contents by default.
+
+- List existing conversations: `list-gemini-conversations`
+- Continue an existing conversation: use `ask-gemini` with `conversationId` set
+- Read recent turns: `read-gemini-conversation` with `conversationId` and optional `limitTurns`
+- Clear old turns (keep file): `clear-gemini-conversation`
+- Delete a conversation file: `delete-gemini-conversation`
+
+Example tool calls:
+
+```json
+{ "tool": "list-gemini-conversations" }
+```
+
+```json
+{ "tool": "read-gemini-conversation", "conversationId": "project-review", "limitTurns": 3 }
+```
+
+```json
+{ "tool": "clear-gemini-conversation", "conversationId": "project-review" }
+```
+
+```json
+{ "tool": "delete-gemini-conversation", "conversationId": "project-review" }
+```
+
 ### Tools (for the AI)
 
 These tools are designed to be used by the AI assistant.
