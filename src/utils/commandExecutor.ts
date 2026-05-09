@@ -24,17 +24,23 @@ export function pickWindowsCommandCandidate(command: string, whereOutput: string
     .filter(Boolean);
 
   const escapedCommand = command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const commandWithExtPattern = new RegExp(`[\\\\/]${escapedCommand}\\.(cmd|bat|exe)$`, "i");
+  const commandWithExtPattern = new RegExp(`[\\/]${escapedCommand}\\.(cmd|ps1|bat|exe)$`, "i");
   const commandWithoutExtPattern = new RegExp(`[\\\\/]${escapedCommand}$`, "i");
+  const extensionPriority = ["cmd", "ps1", "bat", "exe"];
 
-  const preferred = lines.find((line) => commandWithExtPattern.test(line));
-  if (preferred) {
-    return preferred;
+  const matchingCandidates = lines.filter((line) => commandWithExtPattern.test(line));
+  for (const ext of extensionPriority) {
+    const candidate = matchingCandidates.find((line) => line.toLowerCase().endsWith(`.${ext}`));
+    if (candidate) {
+      return candidate;
+    }
   }
 
-  const anyExecutable = lines.find((line) => /\.(cmd|bat|exe)$/i.test(line));
-  if (anyExecutable) {
-    return anyExecutable;
+  for (const ext of extensionPriority) {
+    const candidate = lines.find((line) => line.toLowerCase().endsWith(`.${ext}`));
+    if (candidate) {
+      return candidate;
+    }
   }
 
   const extensionless = lines.find((line) => commandWithoutExtPattern.test(line));
@@ -87,16 +93,30 @@ function quoteForWindowsCmd(value: string): string {
   return `"${escaped}"`;
 }
 
+function normalizeWindowsPath(value: string): string {
+  return value.replace(/\//g, "\\");
+}
+
 export function buildCommandExecutionPlan(
   resolvedCommand: string,
   args: string[],
   platform: NodeJS.Platform = process.platform,
 ): { command: string; args: string[] } {
   if (platform === "win32" && /\.(cmd|bat)$/i.test(resolvedCommand)) {
-    const commandString = [resolvedCommand, ...args].map(quoteForWindowsCmd).join(" ");
+    const normalizedCommand = normalizeWindowsPath(resolvedCommand);
+    const argString = args.map(quoteForWindowsCmd).join(" ");
+    const commandString = `call ${quoteForWindowsCmd(normalizedCommand)}${argString ? ` ${argString}` : ""}`;
     return {
       command: "cmd.exe",
       args: ["/d", "/s", "/c", commandString],
+    };
+  }
+
+  if (platform === "win32" && /\.ps1$/i.test(resolvedCommand)) {
+    const normalizedCommand = normalizeWindowsPath(resolvedCommand);
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", normalizedCommand, ...args],
     };
   }
 
@@ -104,6 +124,16 @@ export function buildCommandExecutionPlan(
     command: resolvedCommand,
     args,
   };
+}
+
+export function getSpawnCommandPlan(
+  command: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): { resolvedCommand: string; command: string; args: string[] } {
+  const resolvedCommand = resolveCommandForExecution(command);
+  const executionPlan = buildCommandExecutionPlan(resolvedCommand, args, platform);
+  return { resolvedCommand, ...executionPlan };
 }
 
 export function buildEnoentErrorMessage(command: string): string {
