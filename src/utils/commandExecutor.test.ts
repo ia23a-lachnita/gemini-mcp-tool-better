@@ -46,6 +46,20 @@ test("GEMINI_CLI_PATH removes surrounding quotes", () => {
   delete process.env.GEMINI_CLI_PATH;
 });
 
+test("GEMINI_CLI_PATH removes escaped surrounding quotes", () => {
+  process.env.GEMINI_CLI_PATH = "\\\"C:\\nvm4w\\nodejs\\gemini.cmd\\\"";
+  const resolved = resolveCommandForExecution("gemini");
+  assert.equal(resolved, "C:\\nvm4w\\nodejs\\gemini.cmd");
+  delete process.env.GEMINI_CLI_PATH;
+});
+
+test("GEMINI_CLI_PATH removes single-quoted escaped surrounding quotes", () => {
+  process.env.GEMINI_CLI_PATH = "'\\\"C:\\nvm4w\\nodejs\\gemini.cmd\\\"'";
+  const resolved = resolveCommandForExecution("gemini");
+  assert.equal(resolved, "C:\\nvm4w\\nodejs\\gemini.cmd");
+  delete process.env.GEMINI_CLI_PATH;
+});
+
 test("win32 .cmd execution is wrapped with cmd.exe /d /s /c", () => {
   const plan = buildCommandExecutionPlan(
     "C:\\nvm4w\\nodejs\\gemini.cmd",

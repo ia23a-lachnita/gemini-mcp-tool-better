@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildGeminiArgs, resolveApprovalMode } from "./geminiExecutor.js";
 
-test("no approval flag by default", () => {
+test("plan mode is the default approval flag", () => {
   delete process.env.GEMINI_MCP_APPROVAL_MODE;
   const args = buildGeminiArgs("hello", {});
+  assert.equal(args.includes("--approval-mode=plan"), true);
   assert.equal(args.includes("--approval-mode=yolo"), false);
-  assert.equal(args.some((arg) => arg.startsWith("--approval-mode=")), false);
 });
 
 test("approvalMode yolo adds --approval-mode=yolo", () => {

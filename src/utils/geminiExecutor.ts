@@ -34,7 +34,10 @@ export function resolveApprovalMode(approvalMode?: ApprovalMode): ApprovalMode {
 
   const envMode = process.env.GEMINI_MCP_APPROVAL_MODE?.trim();
   if (!envMode) {
-    return "default";
+    // "plan" = read-only mode: Gemini can read files but never modifies them and never
+    // hangs waiting for tool-use approval in headless (-p) mode. Callers that need
+    // write access should pass approvalMode: "yolo" | "auto_edit" explicitly.
+    return "plan";
   }
 
   if (!isApprovalMode(envMode)) {
@@ -137,7 +140,7 @@ ${prompt_processed}
   }
   
   const args = buildGeminiArgs(prompt_processed, { model, sandbox, approvalMode });
-  
+
   try {
     return await executeCommand(CLI.COMMANDS.GEMINI, args, onProgress);
   } catch (error) {

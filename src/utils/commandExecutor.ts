@@ -2,11 +2,23 @@ import { spawn, spawnSync } from "child_process";
 import { Logger } from "./logger.js";
 
 function normalizeExecutablePath(pathValue: string): string {
-  const trimmed = pathValue.trim();
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1);
+  let normalized = pathValue.trim();
+  // Strip nested wrappers from CLI/JSON/shell escaping patterns:
+  // "path", 'path', \"path\", \\'path\\', and combinations like '\"path\"'.
+  for (let i = 0; i < 6; i += 1) {
+    const previous = normalized;
+    normalized = normalized
+      .replace(/^\\?"/, "")
+      .replace(/\\?"$/, "")
+      .replace(/^\\?'/, "")
+      .replace(/\\?'$/, "")
+      .trim();
+
+    if (normalized === previous) {
+      break;
+    }
   }
-  return trimmed;
+  return normalized;
 }
 
 function getGeminiCliPathOverride(command: string): string | undefined {
@@ -154,7 +166,8 @@ export function buildEnoentErrorMessage(command: string): string {
 export async function executeCommand(
   command: string,
   args: string[],
-  onProgress?: (newOutput: string) => void
+  onProgress?: (newOutput: string) => void,
+  stdinData?: string
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
@@ -165,15 +178,20 @@ export async function executeCommand(
     const childProcess = spawn(executionPlan.command, executionPlan.args, {
       env: process.env,
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [stdinData !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
     });
+
+    if (stdinData !== undefined && childProcess.stdin) {
+      childProcess.stdin.write(stdinData, "utf8");
+      childProcess.stdin.end();
+    }
 
     let stdout = "";
     let stderr = "";
     let isResolved = false;
     let lastReportedLength = 0;
     
-    childProcess.stdout.on("data", (data) => {
+    childProcess.stdout!.on("data", (data) => {
       stdout += data.toString();
       
       // Report new content if callback provided
@@ -186,7 +204,7 @@ export async function executeCommand(
 
 
     // CLI level errors
-    childProcess.stderr.on("data", (data) => {
+    childProcess.stderr!.on("data", (data) => {
       stderr += data.toString();
       // find RESOURCE_EXHAUSTED when gemini-2.5-pro quota is exceeded
       if (stderr.includes("RESOURCE_EXHAUSTED")) {

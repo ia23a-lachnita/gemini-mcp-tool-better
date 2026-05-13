@@ -16,7 +16,10 @@ export const pingTool: UnifiedTool = {
   category: 'simple',
   execute: async (args, onProgress) => {
     const message = args.prompt || args.message || "Pong!";
-    return executeCommand("echo", [message as string], onProgress);
+    if (onProgress) {
+      onProgress(String(message));
+    }
+    return String(message);
   }
 };
 
