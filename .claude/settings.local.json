@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__gemini-cli__ping",
+      "mcp__gemini-cli__Help",
+      "Bash"
+    ]
+  }
+}
